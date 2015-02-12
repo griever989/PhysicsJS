@@ -1,9 +1,9 @@
 /**
- * PhysicsJS v0.7.0 - 2014-12-08
+ * PhysicsJS v0.7.0 - 2015-02-11
  * A modular, extendable, and easy-to-use physics engine for javascript
  * http://wellcaffeinated.net/PhysicsJS
  *
- * Copyright (c) 2014 Jasper Palfree <jasper@wellcaffeinated.net>
+ * Copyright (c) 2015 Jasper Palfree <jasper@wellcaffeinated.net>
  * Licensed MIT
  */
 
@@ -1496,6 +1496,26 @@ Physics.util = {};
         return '('+this._[0] + ', ' + this._[1]+')';
     };
 
+    /**
+     * Physics.vector#toFixedString()
+     *
+     * Gets a formatted string of this vector's coordinates,
+     * fixed to the specified number of decimal places.
+     **/
+    Vector.prototype.toFixedString = function( num ){
+
+        return '(' + this._[0].toFixed( num ) + ', ' + this._[1].toFixed( num ) + ')';
+    };
+
+    /**
+     * Physics.vector#toJSON() -> String
+     *
+     * Gets a JSON representation of this vector.
+     **/
+    Vector.prototype.toJSON = function(){
+
+        return { x: this._[0], y: this._[1] };
+    };
 
     /**
      * Physics.vector#equals( v ) -> Boolean
@@ -5158,6 +5178,7 @@ Physics.geometry.nearestPointOnLine = function nearestPointOnLine( pt, linePt1, 
                ipf: 0
             };
             this._bodies = [];
+            this._integrableBodies = [];
             this._behaviors = [];
             this._integrator = null;
             this._renderer = null;
@@ -5546,6 +5567,10 @@ Physics.geometry.nearestPointOnLine = function nearestPointOnLine( pt, linePt1, 
             body.setWorld( this );
             this._bodies.push( body );
 
+            if ( body.treatment !== 'static' ){
+                this._integrableBodies.push( body );
+            }
+
             this.emit( 'add:body', {
                 body: body
             });
@@ -5574,10 +5599,21 @@ Physics.geometry.nearestPointOnLine = function nearestPointOnLine( pt, linePt1, 
         removeBody: function( body ){
 
             var bodies = this._bodies;
+            var integrableBodies = this._integrableBodies;
 
             if (body){
 
-                for ( var i = 0, l = bodies.length; i < l; ++i ){
+                for ( var i = 0, l = integrableBodies.length; i < l; ++i ){
+
+                    if (body === integrableBodies[ i ]){
+
+                        integrableBodies.splice( i, 1 );
+
+                        break;
+                    }
+                }
+
+                for ( i = 0, l = bodies.length; i < l; ++i ){
 
                     if (body === bodies[ i ]){
 
@@ -5640,7 +5676,7 @@ Physics.geometry.nearestPointOnLine = function nearestPointOnLine( pt, linePt1, 
          **/
         iterate: function( dt ){
 
-            this._integrator.integrate( this._bodies, dt );
+            this._integrator.integrate( this._integrableBodies, dt );
         },
 
         /** chainable
