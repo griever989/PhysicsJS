@@ -748,6 +748,15 @@
         return '('+this._[0] + ', ' + this._[1]+')';
     };
 
+    /**
+     * Physics.vector#toJSON() -> String
+     *
+     * Gets a JSON representation of this vector.
+     **/
+    Vector.prototype.toJSON = function(){
+
+        return { x: this._[0], y: this._[1] };
+    };
 
     /**
      * Physics.vector#equals( v ) -> Boolean
