@@ -156,6 +156,7 @@
                ipf: 0
             };
             this._bodies = [];
+            this._integrableBodies = [];
             this._behaviors = [];
             this._integrator = null;
             this._renderer = null;
@@ -544,6 +545,10 @@
             body.setWorld( this );
             this._bodies.push( body );
 
+            if ( body.treatment !== 'static' ){
+                this._integrableBodies.push( body );
+            }
+
             this.emit( 'add:body', {
                 body: body
             });
@@ -572,10 +577,21 @@
         removeBody: function( body ){
 
             var bodies = this._bodies;
+            var integrableBodies = this._integrableBodies;
 
             if (body){
 
-                for ( var i = 0, l = bodies.length; i < l; ++i ){
+                for ( var i = 0, l = integrableBodies.length; i < l; ++i ){
+
+                    if (body === integrableBodies[ i ]){
+
+                        integrableBodies.splice( i, 1 );
+
+                        break;
+                    }
+                }
+
+                for ( i = 0, l = bodies.length; i < l; ++i ){
 
                     if (body === bodies[ i ]){
 
@@ -638,7 +654,7 @@
          **/
         iterate: function( dt ){
 
-            this._integrator.integrate( this._bodies, dt );
+            this._integrator.integrate( this._integrableBodies, dt );
         },
 
         /** chainable
