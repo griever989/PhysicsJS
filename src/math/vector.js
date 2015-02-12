@@ -749,6 +749,17 @@
     };
 
     /**
+     * Physics.vector#toFixedString()
+     *
+     * Gets a formatted string of this vector's coordinates,
+     * fixed to the specified number of decimal places.
+     **/
+    Vector.prototype.toFixedString = function( num ){
+
+        return '(' + this._[0].toFixed( num ) + ', ' + this._[1].toFixed( num ) + ')';
+    };
+
+    /**
      * Physics.vector#toJSON() -> String
      *
      * Gets a JSON representation of this vector.
