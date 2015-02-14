@@ -479,7 +479,17 @@ Physics.behavior('body-collision-detection', function( parent ){
                     collisions: collisions
                 });
             }
-        }
+        },
+
+        /*
+         * checkPair( bodyA, bodyB ) -> Object
+         * - bodyA (Object): First body
+         * - bodyB (Object): Second body
+         * + (Object): Collision result
+         *
+         * Check a pair for collisions
+         */
+        checkPair: checkPair
     };
 
 });
