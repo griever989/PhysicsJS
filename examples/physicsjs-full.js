@@ -1,5 +1,5 @@
 /**
- * PhysicsJS v0.7.0 - 2015-02-13
+ * PhysicsJS v0.7.0 - 2015-02-14
  * A modular, extendable, and easy-to-use physics engine for javascript
  * http://wellcaffeinated.net/PhysicsJS
  *
@@ -7670,7 +7670,17 @@ Physics.behavior('body-collision-detection', function( parent ){
          *
          * Check a pair for collisions
          */
-        checkPair: checkPair
+        checkPair: checkPair,
+        
+        /*
+         * checkGJK( bodyA, bodyB ) -> Object
+         * - bodyA (Object): First body
+         * - bodyB (Object): Second body
+         * + (Object): Collision result
+         *
+         * Use GJK algorithm to check arbitrary bodies for collisions
+         */
+        checkGJK: checkGJK
     };
 
 });
