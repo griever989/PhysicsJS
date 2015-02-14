@@ -489,7 +489,17 @@ Physics.behavior('body-collision-detection', function( parent ){
          *
          * Check a pair for collisions
          */
-        checkPair: checkPair
+        checkPair: checkPair,
+        
+        /*
+         * checkGJK( bodyA, bodyB ) -> Object
+         * - bodyA (Object): First body
+         * - bodyB (Object): Second body
+         * + (Object): Collision result
+         *
+         * Use GJK algorithm to check arbitrary bodies for collisions
+         */
+        checkGJK: checkGJK
     };
 
 });
