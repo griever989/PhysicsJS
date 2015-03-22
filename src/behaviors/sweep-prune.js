@@ -462,8 +462,8 @@ Physics.behavior('sweep-prune', function( parent ){
                 ,list = this.tracked
                 ,i = list.length
                 ,crossedBoundary = false
-                ,sectionsOld
                 ,sections
+                ,sectionsQuery
                 ,sc
                 ,sl
                 ;
@@ -473,6 +473,7 @@ Physics.behavior('sweep-prune', function( parent ){
 
                 tr = list[ i ];
                 intr = tr.interval;
+                sections = tr.sections;
                 aabb = tr.body.aabb();
 
                 if ( this.isWorldPartitioned() ){
@@ -483,7 +484,6 @@ Physics.behavior('sweep-prune', function( parent ){
                         (Math.floor(intr.max.val.y / this.partitionHeight) !== Math.floor((aabb.y + aabb.hh) / this.partitionHeight))
                     ){
                         crossedBoundary = true;
-                        sectionsOld = this.findIntersectingSections( intr.min.val, intr.max.val ).slice();
                     }
                 }
 
@@ -493,19 +493,23 @@ Physics.behavior('sweep-prune', function( parent ){
                 intr.max.val.clone( aabb ).add( aabb.hw, aabb.hh );
 
                 if ( crossedBoundary ){
-                    sections = this.findIntersectingSections( intr.min.val, intr.max.val, true );
+                    sectionsQuery = this.findIntersectingSections( intr.min.val, intr.max.val, true );
 
-                    for ( sc = 0, sl = sectionsOld.length; sc < sl; sc++ ){
-                        if ( sections.indexOf( sectionsOld[ sc ] ) === -1 ){
+                    for ( sc = 0, sl = sections.length; sc < sl; sc++ ){
+                        if ( sectionsQuery.indexOf( sections[ sc ] ) === -1 ){
                             // we moved out of this section
-                            this.removeFromIntervalList( tr, sectionsOld[ sc ] );
+                            this.removeFromIntervalList( tr, sections[ sc ] );
+                            sections.splice(sc, 1);
+                            sc--;
+                            sl--;
                         }
                     }
 
-                    for ( sc = 0, sl = sections.length; sc < sl; sc++ ){
-                        if ( sectionsOld.indexOf( sections[ sc ] ) === -1 ){
+                    for ( sc = 0, sl = sectionsQuery.length; sc < sl; sc++ ){
+                        if ( sections.indexOf( sectionsQuery[ sc ] ) === -1 ){
                             // we moved into a new section
-                            this.addToIntervalList( tr, sections[ sc ] );
+                            this.addToIntervalList( tr, sectionsQuery[ sc ] );
+                            sections.push(sectionsQuery[ sc ]);
                         }
                     }
                 }
@@ -547,6 +551,7 @@ Physics.behavior('sweep-prune', function( parent ){
             lists = this.findIntersectingSections( intr.min.val, intr.max.val, true );
 
             tracker.interval = intr;
+            tracker.sections = lists.slice();
             this.tracked.push( tracker );
 
             for ( var i = 0; i < lists.length; i++ ){
@@ -580,7 +585,7 @@ Physics.behavior('sweep-prune', function( parent ){
                     // remove the tracker at this index
                     trackedList.splice(i, 1);
 
-                    sections = this.findIntersectingSections( tracker.interval.min.val, tracker.interval.max.val );
+                    sections = tracker.sections;
 
                     for ( var listNum = 0; listNum < sections.length; listNum++ ){
 
