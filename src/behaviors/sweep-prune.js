@@ -41,6 +41,9 @@ Physics.behavior('sweep-prune', function( parent ){
             this.encounters = [];
             this.candidates = [];
 
+            this.partitionWidth = 0;
+            this.partitionHeight = 0;
+
             this.clear();
         },
 
@@ -53,13 +56,53 @@ Physics.behavior('sweep-prune', function( parent ){
 
             this.tracked = [];
             this.pairs = []; // pairs selected as candidate collisions by broad phase
-            this.intervalLists = []; // stores lists of aabb projection intervals to be sorted
+            this.intervalSections = []; // stores lists of aabb projection intervals to be sorted
+            this.addIntervalSection( Physics.aabb( 0, 0, this.partitionWidth, this.partitionHeight ) );
+        },
 
-            // init intervalLists
+        addIntervalSection: function ( aabb ){
+
+            var intervalList = [];
             for ( var xyz = 0; xyz < maxDof; ++xyz ){
 
-                this.intervalLists[ xyz ] = [];
+                intervalList[ xyz ] = [];
             }
+
+            var list = {
+                aabb: aabb,
+                list: intervalList
+            };
+            this.intervalSections.push(list);
+
+            return list;
+        },
+
+        /**
+         * SweepPruneBehavior#setPartitionDimensions( x, y )
+         *
+         * Setting dimensions to any value other than 0 will cause
+         * the interval lists to be split over a set of dimensions
+         * each equal to the size set. This can be used to partition
+         * the world in to sections and only perform collision detection
+         * in specific sections.
+         **/
+        setPartitionDimensions: function( x, y ){
+
+            if ( (x === 0 && y === 0) || (x !== 0 && y !== 0) ) {
+                this.partitionWidth = x;
+                this.partitionHeight = y;
+                if (this.tracked.length > 0) {
+                    throw 'Error: Attempt to change dimensions with body data present.';
+                }
+                this.intervalSections = [];
+                this.addIntervalSection( Physics.aabb( 0, 0, this.partitionWidth, this.partitionHeight ) );
+            } else {
+                throw 'Error: Attempt to set invalid partition dimensions. Both dimensions must be either zero or both non-zero.';
+            }
+        },
+
+        isWorldPartitioned: function (){
+            return !(this.partitionWidth === 0 && this.partitionHeight === 0);
         },
 
         // extended
@@ -93,15 +136,20 @@ Physics.behavior('sweep-prune', function( parent ){
          * Execute the broad phase and get candidate collisions
          **/
         broadPhase: function(){
-
             this.updateIntervals();
+            this.updateIntervalLists();
             this.sortIntervalLists();
 
             if ( this._world ){
-                this._world.emit('sweep-prune:intervals', this.intervalLists);
+                this._world.emit('sweep-prune:intervals', this.intervalSections);
             }
 
-            return this.checkOverlaps();
+            Physics.util.clearArray( this.candidates );
+            for ( var i = 0, l = this.intervalSections.length; i < l; i++ ){
+                this.checkOverlaps( i );
+            }
+
+            return this.candidates;
         },
 
         /** internal
@@ -112,6 +160,7 @@ Physics.behavior('sweep-prune', function( parent ){
         sortIntervalLists: function(){
 
             var list
+                ,group
                 ,len
                 ,i
                 ,hole
@@ -122,49 +171,54 @@ Physics.behavior('sweep-prune', function( parent ){
                 ,axis
                 ;
 
-            // for each axis...
-            for ( var xyz = 0; xyz < maxDof; ++xyz ){
+            for ( var groupNum = 0; groupNum < this.intervalSections.length; groupNum++ ){
 
-                // get the intervals for that axis
-                list = this.intervalLists[ xyz ];
-                i = 0;
-                len = list.length;
-                axis = xyz;
+                group = this.intervalSections[ groupNum ];
 
-                // for each interval bound...
-                while ( (++i) < len ){
+                // for each axis...
+                for ( var xyz = 0; xyz < maxDof; ++xyz ){
 
-                    // store bound
-                    bound = list[ i ];
-                    boundVal = bound.val.get( axis );
-                    hole = i;
+                    // get the intervals for that axis
+                    list = group.list[ xyz ];
+                    i = 0;
+                    len = list.length;
+                    axis = xyz;
 
-                    left = list[ hole - 1 ];
-                    leftVal = left && left.val.get( axis );
+                    // for each interval bound...
+                    while ( (++i) < len ){
 
-                    // while others are greater than bound...
-                    while (
-                        hole > 0 &&
-                        (
-                            leftVal > boundVal ||
-                            // if it's an equality, only move it over if
-                            // the hole was created by a minimum
-                            // and the previous is a maximum
-                            // so that we detect contacts also
-                            leftVal === boundVal &&
-                            ( left.type && !bound.type )
-                        )
-                    ) {
+                        // store bound
+                        bound = list[ i ];
+                        boundVal = bound.val.get( axis );
+                        hole = i;
 
-                        // move others greater than bound to the right
-                        list[ hole ] = left;
-                        hole--;
                         left = list[ hole - 1 ];
                         leftVal = left && left.val.get( axis );
-                    }
 
-                    // insert bound in the hole
-                    list[ hole ] = bound;
+                        // while others are greater than bound...
+                        while (
+                            hole > 0 &&
+                            (
+                                leftVal > boundVal ||
+                                // if it's an equality, only move it over if
+                                // the hole was created by a minimum
+                                // and the previous is a maximum
+                                // so that we detect contacts also
+                                leftVal === boundVal &&
+                                ( left.type && !bound.type )
+                            )
+                        ) {
+
+                            // move others greater than bound to the right
+                            list[ hole ] = left;
+                            hole--;
+                            left = list[ hole - 1 ];
+                            leftVal = left && left.val.get( axis );
+                        }
+
+                        // insert bound in the hole
+                        list[ hole ] = bound;
+                    }
                 }
             }
         },
@@ -255,12 +309,12 @@ Physics.behavior('sweep-prune', function( parent ){
         // },
 
         /** internal
-         * SweepPruneBehavior#checkOverlaps() -> Array
+         * SweepPruneBehavior#checkOverlaps( groupNumber ) -> Array
          * + (Array): List of candidate collisions
          *
-         * Check each axis for overlaps of bodies AABBs
+         * Check each axis for overlaps of bodies AABBs and adds to the current list of candidates.
          **/
-        checkOverlaps: function(){
+        checkOverlaps: function( groupNumber ){
 
             var isX
                 ,hash
@@ -280,14 +334,13 @@ Physics.behavior('sweep-prune', function( parent ){
                 ;
 
             Physics.util.clearArray( encounters );
-            Physics.util.clearArray( candidates );
 
             for ( var xyz = 0; xyz < maxDof; ++xyz ){
 
                 // is the x coord
                 isX = (xyz === 0);
                 // get the interval list for this axis
-                list = this.intervalLists[ xyz ];
+                list = this.intervalSections[ groupNumber ].list[ xyz ];
 
                 // for each interval bound
                 for ( i = 0, len = list.length; i < len; i++ ){
@@ -383,10 +436,112 @@ Physics.behavior('sweep-prune', function( parent ){
                 intr = tr.interval;
                 aabb = tr.body.aabb();
 
+                if ( this.isWorldPartitioned() ){
+                    if (
+                        (Math.floor(intr.min.val.x / this.partitionWidth) !== Math.floor((aabb.x - aabb.hw) / this.partitionWidth)) ||
+                        (Math.floor(intr.max.val.x / this.partitionWidth) !== Math.floor((aabb.x + aabb.hw) / this.partitionWidth)) ||
+                        (Math.floor(intr.min.val.y / this.partitionHeight) !== Math.floor((aabb.y - aabb.hh) / this.partitionHeight)) ||
+                        (Math.floor(intr.max.val.y / this.partitionHeight) !== Math.floor((aabb.y + aabb.hh) / this.partitionHeight))
+                    ){
+                        intr.crossedBoundary = true;
+                    }
+                }
+
                 // copy the position (plus or minus) the aabb half-dimensions
                 // into the min/max intervals
                 intr.min.val.clone( aabb ).sub( aabb.hw, aabb.hh );
                 intr.max.val.clone( aabb ).add( aabb.hw, aabb.hh );
+            }
+        },
+
+        updateIntervalLists: function(){
+
+            var tr
+                ,intr
+                ,aabb
+                ,list = this.tracked
+                ,i = list.length
+                ,group
+                ,listNum
+                ,listGroupLen
+                ,xyz
+                ,count
+                ,j
+                ,m
+                ,trackedExistsInAnyGroup
+                ,minmax
+                ;
+
+            // for all tracked bodies
+            while ( (--i) >= 0 ){
+
+                tr = list[ i ];
+                intr = tr.interval;
+
+                if ( intr.crossedBoundary ){
+
+                    // if the new position moved across a partition boundary, update all the lists
+
+                    aabb = tr.body.aabb();
+
+                    trackedExistsInAnyGroup = false;
+                    for ( listNum = 0, listGroupLen = this.intervalSections.length; listNum < listGroupLen; listNum++ ){
+                        group = this.intervalSections[ listNum ];
+
+                        if ( !this.isWorldPartitioned() || Physics.aabb.overlap( aabb, group.aabb ) ){
+                            // overlaps
+
+                            if (tr.sections.indexOf(group) === -1){
+                                for ( xyz = 0; xyz < maxDof; ++xyz ){
+                                    group.list[ xyz ].push( intr.min, intr.max );
+                                }
+                                tr.sections.push( group );
+                            }
+                            trackedExistsInAnyGroup = true;
+                        } else {
+                            // doesn't overlap
+
+                            if ( tr.sections.indexOf(group) !== -1 ){
+                                for ( xyz = 0; xyz < maxDof; ++xyz ){
+
+                                    count = 0;
+
+                                    for ( j = 0, m = group.list[ xyz ].length; j < m; ++j ){
+
+                                        minmax = group.list[ xyz ][ j ];
+
+                                        if ( minmax === intr.min || minmax === intr.max ){
+
+                                            // remove interval from list
+                                            group.list[ xyz ].splice(j, 1);
+                                            j--;
+                                            m--;
+
+                                            if (count > 0){
+                                                break;
+                                            }
+
+                                            count++;
+                                        }
+                                    }
+                                }
+                                tr.sections.splice( tr.sections.indexOf( group ), 1 );
+                            }
+                        }
+                    }
+
+                    if ( !trackedExistsInAnyGroup ){
+                        // need to add group
+                        tr.sections.push( this.addIntervalSection( Physics.aabb(
+                            Math.floor(aabb.x / this.partitionWidth),
+                            Math.floor(aabb.y / this.partitionHeight),
+                            Math.floor(aabb.x / this.partitionWidth) + this.partitionWidth,
+                            Math.floor(aabb.y / this.partitionHeight) + this.partitionHeight
+                        ) ) );
+                    }
+
+                    intr.crossedBoundary = false;
+                }
             }
         },
 
@@ -399,6 +554,7 @@ Physics.behavior('sweep-prune', function( parent ){
         trackBody: function( data ){
 
             var body = data.body
+                ,aabb = data.body.aabb()
                 ,tracker = {
 
                     id: getUniqueId(),
@@ -416,16 +572,33 @@ Physics.behavior('sweep-prune', function( parent ){
                         type: true, //max
                         val: new Physics.vector(),
                         tracker: tracker
-                    }
+                    },
+
+                    crossedBoundary: false
                 }
+                ,lists = this.isWorldPartitioned() ? this.intervalSections.filter(function (list) {
+                    return Physics.aabb.overlap( list.aabb, aabb );
+                }) : [this.intervalSections[0]]
                 ;
 
+            if ( lists.length === 0 ){
+                // need to add new list that contains this body
+                lists.push( this.addIntervalSection( Physics.aabb(
+                    Math.floor(aabb.x / this.partitionWidth),
+                    Math.floor(aabb.y / this.partitionHeight),
+                    Math.floor(aabb.x / this.partitionWidth) + this.partitionWidth,
+                    Math.floor(aabb.y / this.partitionHeight) + this.partitionHeight
+                ) ) );
+            }
+
             tracker.interval = intr;
+            tracker.sections = lists;
             this.tracked.push( tracker );
 
-            for ( var xyz = 0; xyz < maxDof; ++xyz ){
-
-                this.intervalLists[ xyz ].push( intr.min, intr.max );
+            for ( var i = 0; i < lists.length; i++){
+                for ( var xyz = 0; xyz < maxDof; ++xyz ){
+                        lists[ i ].list[ xyz ].push( intr.min, intr.max );
+                }
             }
         },
 
@@ -454,27 +627,30 @@ Physics.behavior('sweep-prune', function( parent ){
                     // remove the tracker at this index
                     trackedList.splice(i, 1);
 
-                    for ( var xyz = 0; xyz < maxDof; ++xyz ){
+                    for ( var listNum = 0; listNum < tracker.sections.length; listNum++ ){
 
-                        count = 0;
-                        list = this.intervalLists[ xyz ];
+                        for ( var xyz = 0; xyz < maxDof; ++xyz ){
 
-                        for ( var j = 0, m = list.length; j < m; ++j ){
+                            count = 0;
+                            list = tracker.sections[ listNum ].list[ xyz ];
 
-                            minmax = list[ j ];
+                            for ( var j = 0, m = list.length; j < m; ++j ){
 
-                            if ( minmax === tracker.interval.min || minmax === tracker.interval.max ){
+                                minmax = list[ j ];
 
-                                // remove interval from list
-                                list.splice(j, 1);
-                                j--;
-                                l--;
+                                if ( minmax === tracker.interval.min || minmax === tracker.interval.max ){
 
-                                if (count > 0){
-                                    break;
+                                    // remove interval from list
+                                    list.splice(j, 1);
+                                    j--;
+                                    l--;
+
+                                    if (count > 0){
+                                        break;
+                                    }
+
+                                    count++;
                                 }
-
-                                count++;
                             }
                         }
                     }
