@@ -1,5 +1,5 @@
 /**
- * PhysicsJS v0.7.0 - 2015-03-21
+ * PhysicsJS v0.7.0 - 2015-03-22
  * A modular, extendable, and easy-to-use physics engine for javascript
  * http://wellcaffeinated.net/PhysicsJS
  *
@@ -59,6 +59,9 @@
                 this.encounters = [];
                 this.candidates = [];
     
+                this.partitionWidth = 0;
+                this.partitionHeight = 0;
+    
                 this.clear();
             },
     
@@ -71,13 +74,125 @@
     
                 this.tracked = [];
                 this.pairs = []; // pairs selected as candidate collisions by broad phase
-                this.intervalLists = []; // stores lists of aabb projection intervals to be sorted
+                this.intervalSections = [[]];
+                this.scratchSections = [];
+                this.sectionMinX = 0;
+                this.sectionMinY = 0;
+                this.sectionMaxX = 0;
+                this.sectionMaxY = 0;
+                this.addIntervalSection( 0, 0 );
+            },
     
-                // init intervalLists
-                for ( var xyz = 0; xyz < maxDof; ++xyz ){
+            addIntervalSection: function ( x, y ){
     
-                    this.intervalLists[ xyz ] = [];
+                this.sectionMinX = Math.min(this.sectionMinX, x);
+                this.sectionMinY = Math.min(this.sectionMinY, y);
+                this.sectionMaxX = Math.max(this.sectionMaxX, x);
+                this.sectionMaxY = Math.max(this.sectionMaxY, y);
+    
+                if (this.intervalSections[x] === undefined) {
+                    this.intervalSections[x] = [];
                 }
+                if (this.intervalSections[x][y] === undefined) {
+                    var intervalList = [];
+                    for ( var xyz = 0; xyz < maxDof; ++xyz ){
+    
+                        intervalList[ xyz ] = [];
+                    }
+    
+                    this.intervalSections[x][y] = intervalList;
+                }
+            },
+    
+            addIntervalSectionFillEmpty: function ( x, y ){
+    
+                var i, il, j, jl;
+    
+                if (x < this.sectionMinX) {
+                    this.sectionMinX = x;
+                } else if (x > this.sectionMaxX) {
+                    this.sectionMaxX = x;
+                }
+                if (y < this.sectionMinY) {
+                    this.sectionMinY = y;
+                } else if (y > this.sectionMaxY) {
+                    this.sectionMaxY = y;
+                }
+    
+                for (i = this.sectionMinX, il = this.sectionMaxX; i <= il; i++) {
+                    for (j = this.sectionMinY, jl = this.sectionMaxY; j <= jl; j++) {
+                        if (this.intervalSections[i] === undefined) {
+                            this.intervalSections[i] = [];
+                        }
+                        if (this.intervalSections[i][j] === undefined) {
+                            var intervalList = [];
+                            for ( var xyz = 0; xyz < maxDof; ++xyz ){
+    
+                                intervalList[ xyz ] = [];
+                            }
+    
+                            this.intervalSections[i][j] = intervalList;
+                        }
+                    }
+                }
+            },
+    
+            findIntersectingSections: function ( min, max, createEmpty ){
+                var i, j, xmin, xmax, ymin, ymax, section;
+    
+                Physics.util.clearArray( this.scratchSections );
+    
+                if (this.isWorldPartitioned()) {
+                    xmin = Math.floor(min.x / this.partitionWidth);
+                    ymin = Math.floor(min.y / this.partitionHeight);
+                    xmax = Math.floor(max.x / this.partitionWidth);
+                    ymax = Math.floor(max.y / this.partitionHeight);
+    
+                    for (j = ymin; j <= ymax; j++) {
+                        for (i = xmin; i <= xmax; i++) {
+                            section = this.intervalSections[i] !== undefined ? this.intervalSections[i][j] : undefined;
+                            if (section === undefined && createEmpty) {
+                                this.addIntervalSection(i, j);
+                                section = this.intervalSections[i][j];
+                            }
+                            if (section !== undefined) {
+                                this.scratchSections.push(section);
+                            }
+                        }
+                    }
+                } else {
+                    this.scratchSections.push(this.intervalSections[0][0]);
+                }
+    
+                return this.scratchSections;
+            },
+    
+            /**
+             * SweepPruneBehavior#setPartitionDimensions( x, y )
+             *
+             * Setting dimensions to any value other than 0 will cause
+             * the interval lists to be split over a set of dimensions
+             * each equal to the size set. This can be used to partition
+             * the world in to sections and only perform collision detection
+             * in specific sections.
+             **/
+            setPartitionDimensions: function( x, y ){
+    
+                if ( (x === 0 && y === 0) || (x !== 0 && y !== 0) ) {
+                    this.partitionWidth = x;
+                    this.partitionHeight = y;
+                    if (this.tracked.length > 0) {
+                        throw 'Error: Attempt to change dimensions with body data present.';
+                    }
+                    this.intervalSections = [[]];
+                    this.addIntervalSection( 0, 0 );
+                } else {
+                    throw 'Error: Attempt to set invalid partition dimensions. Both dimensions must be either zero or both non-zero.';
+                }
+            },
+    
+            isWorldPartitioned: function (){
+                return !(this.partitionWidth === 0 && this.partitionHeight === 0);
             },
     
             // extended
@@ -111,15 +226,18 @@
              * Execute the broad phase and get candidate collisions
              **/
             broadPhase: function(){
-    
                 this.updateIntervals();
                 this.sortIntervalLists();
     
-                if ( this._world ){
-                    this._world.emit('sweep-prune:intervals', this.intervalLists);
+                Physics.util.clearArray( this.candidates );
+                var i, l, j, lj;
+                for ( i = this.sectionMinX, l = this.sectionMaxX; i <= l; i++ ){
+                    for ( j = this.sectionMinY, lj = this.sectionMaxY; j <= lj; j++) {
+                        this.checkOverlaps( i, j );
+                    }
                 }
     
-                return this.checkOverlaps();
+                return this.candidates;
             },
     
             /** internal
@@ -130,6 +248,7 @@
             sortIntervalLists: function(){
     
                 var list
+                    ,section
                     ,len
                     ,i
                     ,hole
@@ -138,51 +257,62 @@
                     ,left
                     ,leftVal
                     ,axis
+                    ,sx
+                    ,sy
+                    ,sxl
+                    ,syl
                     ;
     
-                // for each axis...
-                for ( var xyz = 0; xyz < maxDof; ++xyz ){
+                for ( sx = this.sectionMinX, sxl = this.sectionMaxX; sx <= sxl; sx++ ){
     
-                    // get the intervals for that axis
-                    list = this.intervalLists[ xyz ];
-                    i = 0;
-                    len = list.length;
-                    axis = xyz;
+                    for ( sy = this.sectionMinY, syl = this.sectionMaxY; sy <= syl; sy++ ) {
+                        section = this.intervalSections[ sx ][ sy ];
     
-                    // for each interval bound...
-                    while ( (++i) < len ){
+                        // for each axis...
+                        for ( var xyz = 0; xyz < maxDof; ++xyz ){
     
-                        // store bound
-                        bound = list[ i ];
-                        boundVal = bound.val.get( axis );
-                        hole = i;
+                            // get the intervals for that axis
+                            list = section[ xyz ];
+                            i = 0;
+                            len = list.length;
+                            axis = xyz;
     
-                        left = list[ hole - 1 ];
-                        leftVal = left && left.val.get( axis );
+                            // for each interval bound...
+                            while ( (++i) < len ){
     
-                        // while others are greater than bound...
-                        while (
-                            hole > 0 &&
-                            (
-                                leftVal > boundVal ||
-                                // if it's an equality, only move it over if
-                                // the hole was created by a minimum
-                                // and the previous is a maximum
-                                // so that we detect contacts also
-                                leftVal === boundVal &&
-                                ( left.type && !bound.type )
-                            )
-                        ) {
+                                // store bound
+                                bound = list[ i ];
+                                boundVal = bound.val.get( axis );
+                                hole = i;
     
-                            // move others greater than bound to the right
-                            list[ hole ] = left;
-                            hole--;
-                            left = list[ hole - 1 ];
-                            leftVal = left && left.val.get( axis );
+                                left = list[ hole - 1 ];
+                                leftVal = left && left.val.get( axis );
+    
+                                // while others are greater than bound...
+                                while (
+                                    hole > 0 &&
+                                    (
+                                        leftVal > boundVal ||
+                                        // if it's an equality, only move it over if
+                                        // the hole was created by a minimum
+                                        // and the previous is a maximum
+                                        // so that we detect contacts also
+                                        leftVal === boundVal &&
+                                        ( left.type && !bound.type )
+                                    )
+                                ) {
+    
+                                    // move others greater than bound to the right
+                                    list[ hole ] = left;
+                                    hole--;
+                                    left = list[ hole - 1 ];
+                                    leftVal = left && left.val.get( axis );
+                                }
+    
+                                // insert bound in the hole
+                                list[ hole ] = bound;
+                            }
                         }
-    
-                        // insert bound in the hole
-                        list[ hole ] = bound;
                     }
                 }
             },
@@ -197,6 +327,10 @@
              * Get a pair object for the tracker objects
              **/
             getPair: function(tr1, tr2, doCreate){
+    
+                if ( tr1.body.treatment === 'static' && tr2.body.treatment === 'static' ) {
+                    return null;
+                }
     
                 var hash = pairHash( tr1.id, tr2.id );
     
@@ -215,14 +349,8 @@
                     c = this.pairs[ hash ] = {
                         bodyA: tr1.body,
                         bodyB: tr2.body,
-                        flag: 1,
-                        noCollide: false
+                        flag: 1
                     };
-    
-                    if ( tr1.body.treatment === 'static' && tr2.body.treatment === 'static' ) {
-                        // optimize static pairs by not allowing them to collide
-                        c.noCollide = true;
-                    }
                 }
     
                 if ( doCreate ){
@@ -232,53 +360,13 @@
                 return c;
             },
     
-            // getPair: function(tr1, tr2, doCreate){
-    
-            //     var hash = Math.min(tr1.id, tr2.id) // = pairHash( tr1.id, tr2.id )
-            //         ,other = Math.max(tr1.id, tr2.id)
-            //         ,first
-            //         ,c
-            //         ;
-    
-            //     if ( hash === false ){
-            //         return null;
-            //     }
-    
-            //     first = this.pairs[ hash ];
-    
-            //     if ( !first ){
-            //         if ( !doCreate ){
-            //             return null;
-            //         }
-    
-            //         first = this.pairs[ hash ] = [];
-            //     }
-    
-            //     c = first[ other ];
-    
-            //     if ( !c ){
-    
-            //         if ( !doCreate ){
-            //             return null;
-            //         }
-    
-            //         c = first[ other ] = {
-            //             bodyA: tr1.body,
-            //             bodyB: tr2.body,
-            //             flag: 1
-            //         };
-            //     }
-    
-            //     return c;
-            // },
-    
             /** internal
-             * SweepPruneBehavior#checkOverlaps() -> Array
+             * SweepPruneBehavior#checkOverlaps( x, y ) -> Array
              * + (Array): List of candidate collisions
              *
-             * Check each axis for overlaps of bodies AABBs
+             * Check each axis for overlaps of bodies AABBs and adds to the current list of candidates.
              **/
-            checkOverlaps: function(){
+            checkOverlaps: function( x, y ){
     
                 var isX
                     ,hash
@@ -298,14 +386,13 @@
                     ;
     
                 Physics.util.clearArray( encounters );
-                Physics.util.clearArray( candidates );
     
                 for ( var xyz = 0; xyz < maxDof; ++xyz ){
     
                     // is the x coord
                     isX = (xyz === 0);
                     // get the interval list for this axis
-                    list = this.intervalLists[ xyz ];
+                    list = this.intervalSections[ x ][ y ][ xyz ];
     
                     // for each interval bound
                     for ( i = 0, len = list.length; i < len; i++ ){
@@ -346,7 +433,7 @@
                                     // if it's the x axis, create a pair
                                     c = this.getPair( tr1, tr2, isX );
     
-                                    if ( c && !c.noCollide && c.flag < collisionFlag ){
+                                    if ( c && c.flag < collisionFlag ){
     
                                         // if it's greater than the axis index, set the flag
                                         // to = 0.
@@ -392,6 +479,11 @@
                     ,aabb
                     ,list = this.tracked
                     ,i = list.length
+                    ,crossedBoundary = false
+                    ,sections
+                    ,sectionsQuery
+                    ,sc
+                    ,sl
                     ;
     
                 // for all tracked bodies
@@ -399,12 +491,46 @@
     
                     tr = list[ i ];
                     intr = tr.interval;
+                    sections = tr.sections;
                     aabb = tr.body.aabb();
+    
+                    if ( this.isWorldPartitioned() ){
+                        if (
+                            (Math.floor(intr.min.val.x / this.partitionWidth) !== Math.floor((aabb.x - aabb.hw) / this.partitionWidth)) ||
+                            (Math.floor(intr.max.val.x / this.partitionWidth) !== Math.floor((aabb.x + aabb.hw) / this.partitionWidth)) ||
+                            (Math.floor(intr.min.val.y / this.partitionHeight) !== Math.floor((aabb.y - aabb.hh) / this.partitionHeight)) ||
+                            (Math.floor(intr.max.val.y / this.partitionHeight) !== Math.floor((aabb.y + aabb.hh) / this.partitionHeight))
+                        ){
+                            crossedBoundary = true;
+                        }
+                    }
     
                     // copy the position (plus or minus) the aabb half-dimensions
                     // into the min/max intervals
                     intr.min.val.clone( aabb ).sub( aabb.hw, aabb.hh );
                     intr.max.val.clone( aabb ).add( aabb.hw, aabb.hh );
+    
+                    if ( crossedBoundary ){
+                        sectionsQuery = this.findIntersectingSections( intr.min.val, intr.max.val, true );
+    
+                        for ( sc = 0, sl = sections.length; sc < sl; sc++ ){
+                            if ( sectionsQuery.indexOf( sections[ sc ] ) === -1 ){
+                                // we moved out of this section
+                                this.removeFromIntervalList( tr, sections[ sc ] );
+                                sections.splice(sc, 1);
+                                sc--;
+                                sl--;
+                            }
+                        }
+    
+                        for ( sc = 0, sl = sectionsQuery.length; sc < sl; sc++ ){
+                            if ( sections.indexOf( sectionsQuery[ sc ] ) === -1 ){
+                                // we moved into a new section
+                                this.addToIntervalList( tr, sectionsQuery[ sc ] );
+                                sections.push(sectionsQuery[ sc ]);
+                            }
+                        }
+                    }
                 }
             },
     
@@ -417,6 +543,7 @@
             trackBody: function( data ){
     
                 var body = data.body
+                    ,aabb = data.body.aabb()
                     ,tracker = {
     
                         id: getUniqueId(),
@@ -436,14 +563,17 @@
                             tracker: tracker
                         }
                     }
+                    ,lists
                     ;
     
+                lists = this.findIntersectingSections( intr.min.val, intr.max.val, true );
+    
                 tracker.interval = intr;
+                tracker.sections = lists.slice();
                 this.tracked.push( tracker );
     
-                for ( var xyz = 0; xyz < maxDof; ++xyz ){
-    
-                    this.intervalLists[ xyz ].push( intr.min, intr.max );
+                for ( var i = 0; i < lists.length; i++ ){
+                    this.addToIntervalList( tracker, lists[ i ] );
                 }
             },
     
@@ -461,6 +591,7 @@
                     ,trackedList = this.tracked
                     ,tracker
                     ,count
+                    ,sections
                     ;
     
                 for ( var i = 0, l = trackedList.length; i < l; ++i ){
@@ -472,32 +603,51 @@
                         // remove the tracker at this index
                         trackedList.splice(i, 1);
     
-                        for ( var xyz = 0; xyz < maxDof; ++xyz ){
+                        sections = tracker.sections;
     
-                            count = 0;
-                            list = this.intervalLists[ xyz ];
+                        for ( var listNum = 0; listNum < sections.length; listNum++ ){
     
-                            for ( var j = 0, m = list.length; j < m; ++j ){
-    
-                                minmax = list[ j ];
-    
-                                if ( minmax === tracker.interval.min || minmax === tracker.interval.max ){
-    
-                                    // remove interval from list
-                                    list.splice(j, 1);
-                                    j--;
-                                    l--;
-    
-                                    if (count > 0){
-                                        break;
-                                    }
-    
-                                    count++;
-                                }
-                            }
+                            this.removeFromIntervalList( tracker, sections[listNum] );
                         }
     
                         break;
+                    }
+                }
+            },
+    
+            addToIntervalList: function ( tracker, list ) {
+                var intr = tracker.interval;
+                for ( var xyz = 0; xyz < maxDof; ++xyz ){
+                    list[ xyz ].push( intr.min, intr.max );
+                }
+            },
+    
+            removeFromIntervalList: function ( tracker, list ) {
+    
+                var innerlist, count, minmax;
+    
+                for ( var xyz = 0; xyz < maxDof; ++xyz ){
+    
+                    count = 0;
+                    innerlist = list[ xyz ];
+    
+                    for ( var j = 0, m = innerlist.length; j < m; ++j ){
+    
+                        minmax = innerlist[ j ];
+    
+                        if ( minmax === tracker.interval.min || minmax === tracker.interval.max ){
+    
+                            // remove interval from list
+                            innerlist.splice(j, 1);
+                            j--;
+                            m--;
+    
+                            if (count > 0){
+                                break;
+                            }
+    
+                            count++;
+                        }
                     }
                 }
             },
