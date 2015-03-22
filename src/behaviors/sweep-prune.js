@@ -188,7 +188,7 @@ Physics.behavior('sweep-prune', function( parent ){
 
             var c = this.pairs[ hash ];
 
-            if ( !c ){
+            if ( c === undefined ){
 
                 if ( !doCreate ){
                     return null;
@@ -197,11 +197,17 @@ Physics.behavior('sweep-prune', function( parent ){
                 c = this.pairs[ hash ] = {
                     bodyA: tr1.body,
                     bodyB: tr2.body,
-                    flag: 1
+                    flag: 1,
+                    noCollide: false
                 };
+
+                if ( tr1.body.treatment === 'static' && tr2.body.treatment === 'static' ) {
+                    // optimize static pairs by not allowing them to collide
+                    c.noCollide = true;
+                }
             }
 
-            if ( doCreate){
+            if ( doCreate ){
                 c.flag = 1;
             }
 
@@ -322,7 +328,7 @@ Physics.behavior('sweep-prune', function( parent ){
                                 // if it's the x axis, create a pair
                                 c = this.getPair( tr1, tr2, isX );
 
-                                if ( c && c.flag < collisionFlag ){
+                                if ( c && !c.noCollide && c.flag < collisionFlag ){
 
                                     // if it's greater than the axis index, set the flag
                                     // to = 0.
