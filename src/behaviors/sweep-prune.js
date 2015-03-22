@@ -67,6 +67,27 @@ Physics.behavior('sweep-prune', function( parent ){
 
         addIntervalSection: function ( x, y ){
 
+            this.sectionMinX = Math.min(this.sectionMinX, x);
+            this.sectionMinY = Math.min(this.sectionMinY, y);
+            this.sectionMaxX = Math.max(this.sectionMaxX, x);
+            this.sectionMaxY = Math.max(this.sectionMaxY, y);
+
+            if (this.intervalSections[x] === undefined) {
+                this.intervalSections[x] = [];
+            }
+            if (this.intervalSections[x][y] === undefined) {
+                var intervalList = [];
+                for ( var xyz = 0; xyz < maxDof; ++xyz ){
+
+                    intervalList[ xyz ] = [];
+                }
+
+                this.intervalSections[x][y] = intervalList;
+            }
+        },
+
+        addIntervalSectionFillEmpty: function ( x, y ){
+
             var i, il, j, jl;
 
             if (x < this.sectionMinX) {
@@ -82,9 +103,10 @@ Physics.behavior('sweep-prune', function( parent ){
 
             for (i = this.sectionMinX, il = this.sectionMaxX; i <= il; i++) {
                 for (j = this.sectionMinY, jl = this.sectionMaxY; j <= jl; j++) {
-                    if (this.intervalSections[i][j]) {
-                        continue;
-                    } else {
+                    if (this.intervalSections[i] === undefined) {
+                        this.intervalSections[i] = [];
+                    }
+                    if (this.intervalSections[i][j] === undefined) {
                         var intervalList = [];
                         for ( var xyz = 0; xyz < maxDof; ++xyz ){
 
@@ -110,12 +132,14 @@ Physics.behavior('sweep-prune', function( parent ){
 
                 for (j = ymin; j <= ymax; j++) {
                     for (i = xmin; i <= xmax; i++) {
-                        section = this.intervalSections[i][j];
+                        section = this.intervalSections[i] !== undefined ? this.intervalSections[i][j] : undefined;
                         if (section === undefined && createEmpty) {
                             this.addIntervalSection(i, j);
                             section = this.intervalSections[i][j];
                         }
-                        this.scratchSections.push(this.intervalSections[i][j]);
+                        if (section !== undefined) {
+                            this.scratchSections.push(section);
+                        }
                     }
                 }
             } else {
@@ -286,6 +310,10 @@ Physics.behavior('sweep-prune', function( parent ){
          **/
         getPair: function(tr1, tr2, doCreate){
 
+            if ( tr1.body.treatment === 'static' && tr2.body.treatment === 'static' ) {
+                return null;
+            }
+
             var hash = pairHash( tr1.id, tr2.id );
 
             if ( hash === false ){
@@ -303,14 +331,8 @@ Physics.behavior('sweep-prune', function( parent ){
                 c = this.pairs[ hash ] = {
                     bodyA: tr1.body,
                     bodyB: tr2.body,
-                    flag: 1,
-                    noCollide: false
+                    flag: 1
                 };
-
-                if ( tr1.body.treatment === 'static' && tr2.body.treatment === 'static' ) {
-                    // optimize static pairs by not allowing them to collide
-                    c.noCollide = true;
-                }
             }
 
             if ( doCreate ){
@@ -393,7 +415,7 @@ Physics.behavior('sweep-prune', function( parent ){
                                 // if it's the x axis, create a pair
                                 c = this.getPair( tr1, tr2, isX );
 
-                                if ( c && !c.noCollide && c.flag < collisionFlag ){
+                                if ( c && c.flag < collisionFlag ){
 
                                     // if it's greater than the axis index, set the flag
                                     // to = 0.
@@ -440,6 +462,7 @@ Physics.behavior('sweep-prune', function( parent ){
                 ,list = this.tracked
                 ,i = list.length
                 ,crossedBoundary = false
+                ,sectionsOld
                 ,sections
                 ,sc
                 ,sl
@@ -460,10 +483,7 @@ Physics.behavior('sweep-prune', function( parent ){
                         (Math.floor(intr.max.val.y / this.partitionHeight) !== Math.floor((aabb.y + aabb.hh) / this.partitionHeight))
                     ){
                         crossedBoundary = true;
-                        sections = this.findIntersectingSections( intr.min.val, intr.max.val );
-                        for( sc = 0, sl = sections.length; sc < sl; sc++ ){
-                            this.removeFromIntervalList( tr, sections[ sc ] );
-                        }
+                        sectionsOld = this.findIntersectingSections( intr.min.val, intr.max.val ).slice();
                     }
                 }
 
@@ -474,8 +494,19 @@ Physics.behavior('sweep-prune', function( parent ){
 
                 if ( crossedBoundary ){
                     sections = this.findIntersectingSections( intr.min.val, intr.max.val, true );
-                    for( sc = 0, sl = sections.length; sc < sl; sc++ ){
-                        this.addToIntervalList( tr, sections[ sc ] );
+
+                    for ( sc = 0, sl = sectionsOld.length; sc < sl; sc++ ){
+                        if ( sections.indexOf( sectionsOld[ sc ] ) === -1 ){
+                            // we moved out of this section
+                            this.removeFromIntervalList( tr, sectionsOld[ sc ] );
+                        }
+                    }
+
+                    for ( sc = 0, sl = sections.length; sc < sl; sc++ ){
+                        if ( sectionsOld.indexOf( sections[ sc ] ) === -1 ){
+                            // we moved into a new section
+                            this.addToIntervalList( tr, sections[ sc ] );
+                        }
                     }
                 }
             }
