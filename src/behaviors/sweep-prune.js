@@ -533,10 +533,10 @@ Physics.behavior('sweep-prune', function( parent ){
                     if ( !trackedExistsInAnyGroup ){
                         // need to add group
                         tr.sections.push( this.addIntervalSection( Physics.aabb(
-                            Math.floor(aabb.x / this.partitionWidth),
-                            Math.floor(aabb.y / this.partitionHeight),
-                            Math.floor(aabb.x / this.partitionWidth) + this.partitionWidth,
-                            Math.floor(aabb.y / this.partitionHeight) + this.partitionHeight
+                            Math.floor((aabb.x - aabb.hw) / this.partitionWidth),
+                            Math.floor((aabb.y - aabb.hh) / this.partitionHeight),
+                            Math.floor((aabb.x - aabb.hw) / this.partitionWidth) + this.partitionWidth,
+                            Math.floor((aabb.y - aabb.hh) / this.partitionHeight) + this.partitionHeight
                         ) ) );
                     }
 
@@ -584,10 +584,10 @@ Physics.behavior('sweep-prune', function( parent ){
             if ( lists.length === 0 ){
                 // need to add new list that contains this body
                 lists.push( this.addIntervalSection( Physics.aabb(
-                    Math.floor(aabb.x / this.partitionWidth),
-                    Math.floor(aabb.y / this.partitionHeight),
-                    Math.floor(aabb.x / this.partitionWidth) + this.partitionWidth,
-                    Math.floor(aabb.y / this.partitionHeight) + this.partitionHeight
+                    Math.floor((aabb.x - aabb.hw) / this.partitionWidth),
+                    Math.floor((aabb.y - aabb.hh) / this.partitionHeight),
+                    Math.floor((aabb.x - aabb.hw) / this.partitionWidth) + this.partitionWidth,
+                    Math.floor((aabb.y - aabb.hw) / this.partitionHeight) + this.partitionHeight
                 ) ) );
             }
 
