@@ -90,16 +90,10 @@ Physics.behavior('sweep-prune', function( parent ){
 
             var i, il, j, jl;
 
-            if (x < this.sectionMinX) {
-                this.sectionMinX = x;
-            } else if (x > this.sectionMaxX) {
-                this.sectionMaxX = x;
-            }
-            if (y < this.sectionMinY) {
-                this.sectionMinY = y;
-            } else if (y > this.sectionMaxY) {
-                this.sectionMaxY = y;
-            }
+            this.sectionMinX = Math.min(this.sectionMinX, x);
+            this.sectionMinY = Math.min(this.sectionMinY, y);
+            this.sectionMaxX = Math.max(this.sectionMaxX, x);
+            this.sectionMaxY = Math.max(this.sectionMaxY, y);
 
             for (i = this.sectionMinX, il = this.sectionMaxX; i <= il; i++) {
                 for (j = this.sectionMinY, jl = this.sectionMaxY; j <= jl; j++) {
@@ -134,7 +128,7 @@ Physics.behavior('sweep-prune', function( parent ){
                     for (i = xmin; i <= xmax; i++) {
                         section = this.intervalSections[i] !== undefined ? this.intervalSections[i][j] : undefined;
                         if (section === undefined && createEmpty) {
-                            this.addIntervalSection(i, j);
+                            this.addIntervalSectionFillEmpty(i, j);
                             section = this.intervalSections[i][j];
                         }
                         if (section !== undefined) {
